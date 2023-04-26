@@ -6,6 +6,8 @@ const url = require('url');
 const async = require('async');
 const tmp = require('tmp');
 const { execFile } = require('child_process');
+// const util = require('node:util');
+// const execFile = util.promisify(require('node:child_process').execFile);
 
 const convertWithOptions = (document, format, filter, options, callback) => {
     const tmpOptions = (options || {}).tmpOptions || {};
@@ -43,13 +45,21 @@ const convertWithOptions = (document, format, filter, options, callback) => {
                 }
             );
         },
-        saveSource: callback => fs.writeFile(path.join(tempDir.name, 'source'), document, callback),
+        saveSource: callback => {
+            let filePath = path.join(tempDir.name, 'source');
+            if (typeof document === 'string' && fs.existsSync(document)) {
+                fs.renameSync(document, filePath);
+            } else {
+                fs.writeFileSync(path.join(tempDir.name, 'source'), document);
+            }
+            return callback(null, filePath);
+        },
         convert: ['soffice', 'saveSource', (results, callback) => {
             let command = `-env:UserInstallation=${url.pathToFileURL(installDir.name)} --headless --convert-to ${format}`;
             if (filter !== undefined) {
                 command += `:"${filter}"`;
             }
-            command += ` --outdir ${tempDir.name} ${path.join(tempDir.name, 'source')}`;
+            command += ` --outdir ${tempDir.name} ${results.saveSource}`;
             const args = command.split(' ');
             return execFile(results.soffice, args, callback);
         }],
@@ -60,8 +70,10 @@ const convertWithOptions = (document, format, filter, options, callback) => {
             }, (callback) => fs.readFile(path.join(tempDir.name, `source.${format.split(":")[0]}`), callback), callback)
         ]
     }, (err, res) => {
-        tempDir.removeCallback();
-        installDir.removeCallback();
+        if (tmpOptions.keep !== true) {
+            tempDir.removeCallback();
+            installDir.removeCallback();
+        }
 
         if (err) {
             return callback(err);
